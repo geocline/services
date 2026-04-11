@@ -1,0 +1,43 @@
+services:
+  second-brain:
+    name: "Second Brain"
+    dir: "/Users/geo/Claude Projects/second-brain-main"
+    command: ["python3", ".agents/skills/vault-daemon/scripts/daemon_control.py", "start"]
+    pid_file: "/Users/geo/Claude Projects/.services/pids/second-brain.pid"
+
+  tiktok:
+    name: "TikTok Processor"
+    dir: "/Users/geo/Claude Projects/tiktok processor"
+    command: ["npm", "start"]
+    pid_file: "/Users/geo/Claude Projects/.services/pids/tiktok.pid"
+    port: 3001
+
+  varys:
+    name: "Varys Bot"
+    dir: "/Users/geo/Claude Projects/varys"
+    command: ["/usr/local/bin/python3.11", "bot.py"]
+    pid_file: "/Users/geo/Claude Projects/.services/pids/varys.pid"
+
+  recipe:
+    name: "Recipe PWA"
+    dir: "/Users/geo/Claude Projects/recipe-pwa"
+    command: ["npm", "start"]
+    pid_file: "/Users/geo/Claude Projects/.services/pids/recipe.pid"
+    port: 3002
+
+  pantry:
+    name: "Pantry Inventory"
+    dir: "/Users/geo/Claude Projects/pantryinventory"
+    command: ["bash", "start.sh"]
+    pid_file: "/Users/geo/Claude Projects/.services/pids/pantry.pid"
+    port: 8000
+
+  litellm:
+    name: "LiteLLM Proxy"
+    dir: "/Users/geo/.litellm"
+    command: ["/bin/bash", "start.sh"]
+    pid_file: "/Users/geo/Claude Projects/.services/pids/litellm.pid"
+    port: 4000
+    launchd_service: true
+
+log_file: "/Users/geo/Claude Projects/.services/logs/services.log"
