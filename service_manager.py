@@ -98,13 +98,23 @@ class ServiceManager:
         """Find the PID of a process listening on a port."""
         try:
             result = subprocess.run(
-                ["lsof", "-t", "-i", f":{port}"],
+                ["lsof", "-i", f":{port}"],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
-                return int(result.stdout.strip().split()[0])
+                for line in result.stdout.strip().split("\n"):
+                    # Skip header line
+                    if line.startswith("COMMAND"):
+                        continue
+                    parts = line.split()
+                    if len(parts) < 2:
+                        continue
+                    pid = int(parts[1])
+                    # Only return PIDs with LISTEN state, skip ESTABLISHED (browser connections)
+                    if "(LISTEN)" in line:
+                        return pid
         except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
             pass
         return None

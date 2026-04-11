@@ -40,4 +40,11 @@ services:
     port: 4000
     launchd_service: true
 
+  qwen2i:
+    name: "Qwen2i"
+    dir: "/Users/geo/Claude Projects/qwen2i"
+    command: ["bash", "start.sh"]
+    pid_file: "/Users/geo/Claude Projects/.services/pids/qwen2i.pid"
+    port: 8501
+
 log_file: "/Users/geo/Claude Projects/.services/logs/services.log"
