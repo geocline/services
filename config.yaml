@@ -1,9 +1,26 @@
 services:
   second-brain:
-    name: "Second Brain"
+    name: "Vault Daemon"
     dir: "/Users/geo/Claude Projects/second-brain-main"
     command: ["python3", ".agents/skills/vault-daemon/scripts/daemon_control.py", "start"]
     pid_file: "/Users/geo/Claude Projects/.services/pids/second-brain.pid"
+    internal_pid_file: "/Users/geo/Claude Projects/second-brain-main/.claude/skills/vault-daemon/daemon.pid"
+
+  vault-telegram-bot:
+    name: "Vault Telegram Bot"
+    dir: "/Users/geo/Claude Projects/second-brain-main/.claude/skills/vault-telegram-bot"
+    command: []
+    pid_file: "/Users/geo/Claude Projects/.services/pids/vault-telegram-bot.pid"
+    launchd_service: true
+    launchd_label: "com.geo.vault-telegram-bot"
+
+  apple-reminders-importer:
+    name: "Apple Reminders Importer"
+    dir: "/Users/geo/Claude Projects/second-brain-main"
+    command: []
+    pid_file: "/Users/geo/Claude Projects/.services/pids/apple-reminders-importer.pid"
+    launchd_service: true
+    launchd_label: "com.geo.second-brain-reminders"
 
   tiktok:
     name: "TikTok Processor"
@@ -46,5 +63,12 @@ services:
     command: ["bash", "start.sh"]
     pid_file: "/Users/geo/Claude Projects/.services/pids/qwen2i.pid"
     port: 8501
+
+  image-descriptor:
+    name: "Image Descriptor"
+    dir: "/Users/geo/Claude Projects/image-descriptor"
+    command: ["/Users/geo/Claude Projects/image-descriptor/.venv/bin/python", "server.py"]
+    pid_file: "/Users/geo/Claude Projects/.services/pids/image-descriptor.pid"
+    port: 8766
 
 log_file: "/Users/geo/Claude Projects/.services/logs/services.log"
