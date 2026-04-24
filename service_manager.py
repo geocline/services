@@ -69,25 +69,52 @@ class ServiceManager:
             if pid is None and svc.internal_pid_file:
                 pid = PIDManager.read_pid(svc.internal_pid_file)
             port_open = None
+            service_type = "process"
+            status_state = "stopped"
+            status_label = "Stopped"
+            status_detail = ""
+            launchd_loaded = None
 
             # For launchd services, check via launchctl AND port
             if svc.launchd_service:
+                service_type = "launchd"
                 label = self._get_launchd_label(svc)
                 launchd_pid = self._get_launchd_running_pid(label)
-                running = launchd_pid is not None or self._is_launchd_loaded(label)
+                launchd_loaded = self._is_launchd_loaded(label)
+                running = launchd_pid is not None or launchd_loaded
                 if launchd_pid and not pid:
                     pid = launchd_pid
+                if launchd_pid:
+                    status_state = "running"
+                    status_label = "Running"
+                    status_detail = f"launchd job active as {label}"
+                elif launchd_loaded:
+                    status_state = "idle"
+                    status_label = "Loaded / Idle"
+                    status_detail = f"Scheduled launchd job loaded as {label}; no process is running between checks."
+                else:
+                    status_detail = f"launchd job {label} is not loaded"
                 # Also verify via port if service has one
                 if svc.port:
                     port_open = self._check_port(svc.port)
                     if port_open and not running:
                         running = True
+                        status_state = "running"
+                        status_label = "Running"
+                        status_detail = f"Port {svc.port} is listening"
                     if running and not pid:
                         pid = self._find_pid_by_port(svc.port)
             # For services with ports, check port first (more reliable for npm/node)
             elif svc.port:
+                service_type = "port"
                 port_open = self._check_port(svc.port)
                 running = port_open
+                if running:
+                    status_state = "running"
+                    status_label = "Running"
+                    status_detail = f"Port {svc.port} is listening"
+                else:
+                    status_detail = f"Port {svc.port} is not listening"
                 # If port is open but no PID, find the PID
                 if running and not pid:
                     pid = self._find_pid_by_port(svc.port)
@@ -100,6 +127,12 @@ class ServiceManager:
                     if not pid or not PIDManager.is_running(pid):
                         pid = self._find_pid_by_dir(svc.dir)
                 running = pid is not None and PIDManager.is_running(pid)
+                if running:
+                    status_state = "running"
+                    status_label = "Running"
+                    status_detail = "Process is running"
+                else:
+                    status_detail = "No live process found"
 
             result[key] = {
                 "name": svc.display_name,
@@ -107,6 +140,12 @@ class ServiceManager:
                 "pid": pid,
                 "port": svc.port,
                 "port_open": port_open,
+                "service_type": service_type,
+                "status_state": status_state,
+                "status_label": status_label,
+                "status_detail": status_detail,
+                "launchd_label": self._get_launchd_label(svc) if svc.launchd_service else None,
+                "launchd_loaded": launchd_loaded,
             }
 
         return result
