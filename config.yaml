@@ -90,6 +90,17 @@ services:
     pid_file: /Users/geo/Claude Projects/.services/pids/litellm.pid
     port: 4000
     launchd_service: true
+  litellm-dashboard:
+    # Gateway Patch Bay: wiring, model scout, verdicts for the LiteLLM proxy above.
+    # launchd binds it to 0.0.0.0 so the card link works over Tailscale.
+    # Plist source: LiteLLM server/launchd/com.geo.litellm-dashboard.plist
+    name: LiteLLM Gateway Dashboard
+    dir: /Users/geo/Claude Projects/LiteLLM server
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/litellm-dashboard.pid
+    launchd_service: true
+    launchd_label: com.geo.litellm-dashboard
+    port: 4040
   qwen2i:
     name: Qwen2i
     dir: /Users/geo/Claude Projects/qwen2i
