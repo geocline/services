@@ -1,74 +1,265 @@
 services:
   second-brain:
-    name: "Vault Daemon"
-    dir: "/Users/geo/Claude Projects/second-brain-main"
-    command: ["python3", ".agents/skills/vault-daemon/scripts/daemon_control.py", "start"]
-    pid_file: "/Users/geo/Claude Projects/.services/pids/second-brain.pid"
-    internal_pid_file: "/Users/geo/Claude Projects/second-brain-main/.claude/skills/vault-daemon/daemon.pid"
-
+    name: Vault Daemon
+    dir: /Users/geo/Claude Projects/second-brain-main
+    command:
+    - python3
+    - .agents/skills/vault-daemon/scripts/daemon_control.py
+    - start
+    pid_file: /Users/geo/Claude Projects/.services/pids/second-brain.pid
+    internal_pid_file: /Users/geo/Claude Projects/second-brain-main/.claude/skills/vault-daemon/daemon.pid
   vault-telegram-bot:
-    name: "Vault Telegram Bot"
-    dir: "/Users/geo/Claude Projects/second-brain-main/.claude/skills/vault-telegram-bot"
+    name: Vault Telegram Bot
+    dir: /Users/geo/Claude Projects/second-brain-main/.claude/skills/vault-telegram-bot
     command: []
-    pid_file: "/Users/geo/Claude Projects/.services/pids/vault-telegram-bot.pid"
+    pid_file: /Users/geo/Claude Projects/.services/pids/vault-telegram-bot.pid
     launchd_service: true
-    launchd_label: "com.geo.vault-telegram-bot"
-
+    launchd_label: com.geo.vault-telegram-bot
   apple-reminders-importer:
-    name: "Apple Reminders Importer"
-    dir: "/Users/geo/Claude Projects/second-brain-main"
+    name: Apple Reminders Importer
+    dir: /Users/geo/Claude Projects/second-brain-main
     command: []
-    pid_file: "/Users/geo/Claude Projects/.services/pids/apple-reminders-importer.pid"
+    pid_file: /Users/geo/Claude Projects/.services/pids/apple-reminders-importer.pid
     launchd_service: true
-    launchd_label: "com.geo.second-brain-reminders"
-
-  tiktok:
-    name: "TikTok Processor"
-    dir: "/Users/geo/Claude Projects/tiktok processor"
-    command: ["npm", "start"]
-    pid_file: "/Users/geo/Claude Projects/.services/pids/tiktok.pid"
-    port: 3001
-
+    launchd_label: com.geo.second-brain-reminders
+  # TikTok Processor migrated to the Mac Mini on 2026-08-20 (kunta@100.81.86.20,
+  # monitored by Pulse HQ at http://100.81.86.20:8800). Hidden here, NOT deleted:
+  # uncomment to restore the laptop card. The laptop checkout is dev-only now.
+  # tiktok:
+  #   name: TikTok Processor
+  #   dir: /Users/geo/Claude Projects/tiktok processor
+  #   command:
+  #   - npm
+  #   - start
+  #   pid_file: /Users/geo/Claude Projects/.services/pids/tiktok.pid
+  #   port: 3001
   varys:
-    name: "Varys Bot"
-    dir: "/Users/geo/Claude Projects/varys"
-    command: ["/usr/local/bin/python3.11", "bot.py"]
-    pid_file: "/Users/geo/Claude Projects/.services/pids/varys.pid"
-
+    name: Varys Bot
+    dir: /Users/geo/Claude Projects/varys
+    command:
+    - /usr/local/bin/python3.11
+    - bot.py
+    pid_file: /Users/geo/Claude Projects/.services/pids/varys.pid
   recipe:
-    name: "Recipe PWA"
-    dir: "/Users/geo/Claude Projects/recipe-pwa"
-    command: ["npm", "start"]
-    pid_file: "/Users/geo/Claude Projects/.services/pids/recipe.pid"
+    name: Recipe PWA
+    # Moved to kuntas-mac-mini 2026-07-26 so it survives the laptop sleeping.
+    # Reached over Tailscale with key-based SSH; launchd on that host owns the
+    # lifecycle, so start/stop are launchctl load/unload there.
+    host: kunta@100.81.86.20
+    dir: /Users/kunta/projects/recipe-pwa
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/recipe.pid
+    launchd_service: true
+    launchd_label: com.kai.recipe-pwa
+    plist_path: /Users/kunta/Library/LaunchAgents/com.kai.recipe-pwa.plist
     port: 3002
-
-  pantry:
-    name: "Pantry Inventory"
-    dir: "/Users/geo/Claude Projects/pantryinventory"
-    command: ["bash", "start.sh"]
-    pid_file: "/Users/geo/Claude Projects/.services/pids/pantry.pid"
-    port: 8000
-
+    # tailscale serve fronts port 3002 with real HTTPS here. HTTPS is required for
+    # the service worker to register, which is what makes it installable on iOS.
+    url: https://kuntas-mac-mini.tail9f0829.ts.net:8443
+  pantryinventory-api:
+    name: Pantry Inventory API
+    dir: /Users/geo/Claude Projects/pantryinventory
+    command:
+    - .venv/bin/python3
+    - service_control.py
+    - api
+    - start
+    pid_file: /Users/geo/Claude Projects/.services/pids/pantryinventory-api.pid
+    internal_pid_file: /Users/geo/Claude Projects/.services/pids/pantryinventory-api.internal.pid
+    port: 8701
+    health_url: http://localhost:8701/api/health
+    health_response: '{"status":"ok"}'
+    process_match: uvicorn
+  pantryinventory-telegram-bot:
+    name: Pantry Inventory Telegram Bot
+    dir: /Users/geo/Claude Projects/pantryinventory
+    command:
+    - .venv/bin/python3
+    - service_control.py
+    - bot
+    - start
+    pid_file: /Users/geo/Claude Projects/.services/pids/pantryinventory-telegram-bot.pid
+    internal_pid_file: /Users/geo/Claude Projects/.services/pids/pantryinventory-telegram-bot.internal.pid
+    process_match: backend/bot.py
   litellm:
-    name: "LiteLLM Proxy"
-    dir: "/Users/geo/.litellm"
-    command: ["/bin/bash", "start.sh"]
-    pid_file: "/Users/geo/Claude Projects/.services/pids/litellm.pid"
+    name: LiteLLM Proxy
+    dir: /Users/geo/.litellm
+    command:
+    - /bin/bash
+    - start.sh
+    pid_file: /Users/geo/Claude Projects/.services/pids/litellm.pid
     port: 4000
     launchd_service: true
-
   qwen2i:
-    name: "Qwen2i"
-    dir: "/Users/geo/Claude Projects/qwen2i"
-    command: ["bash", "start.sh"]
-    pid_file: "/Users/geo/Claude Projects/.services/pids/qwen2i.pid"
+    name: Qwen2i
+    dir: /Users/geo/Claude Projects/qwen2i
+    command:
+    - bash
+    - start.sh
+    pid_file: /Users/geo/Claude Projects/.services/pids/qwen2i.pid
     port: 8501
-
   image-descriptor:
-    name: "Image Descriptor"
-    dir: "/Users/geo/Claude Projects/image-descriptor"
-    command: ["/Users/geo/Claude Projects/image-descriptor/.venv/bin/python", "server.py"]
-    pid_file: "/Users/geo/Claude Projects/.services/pids/image-descriptor.pid"
+    name: Image Descriptor
+    dir: /Users/geo/Claude Projects/image-descriptor
+    command:
+    - /Users/geo/Claude Projects/image-descriptor/.venv/bin/python
+    - server.py
+    pid_file: /Users/geo/Claude Projects/.services/pids/image-descriptor.pid
     port: 8766
-
-log_file: "/Users/geo/Claude Projects/.services/logs/services.log"
+  fireflies-watcher:
+    name: Fireflies Watcher
+    dir: /Users/geo/Claude Projects/second-brain-main/.claude/skills/fireflies-watcher
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/fireflies-watcher.pid
+    launchd_service: true
+    launchd_label: com.geo.fireflies-watcher
+  work-cockpit:
+    name: Work Cockpit
+    dir: /Users/geo/Claude Projects/Work_Cockpit
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/work-cockpit.pid
+    launchd_service: true
+    launchd_label: com.geo.work-cockpit
+    port: 8770
+  email-admin:
+    name: Email Admin
+    dir: /Users/geo/Claude Projects/Email-Admin
+    command:
+    - python3
+    - service_control.py
+    - web
+    - start
+    pid_file: /Users/geo/Claude Projects/.services/pids/email-admin.pid
+    internal_pid_file: /Users/geo/Claude Projects/.services/pids/email-admin-web.internal.pid
+    port: 8771
+  email-admin-telegram:
+    name: Email Admin Telegram
+    dir: /Users/geo/Claude Projects/Email-Admin
+    command:
+    - python3
+    - service_control.py
+    - telegram
+    - start
+    pid_file: /Users/geo/Claude Projects/.services/pids/email-admin-telegram.pid
+    internal_pid_file: /Users/geo/Claude Projects/.services/pids/email-admin-telegram.internal.pid
+  vc-books:
+    name: VC Books
+    dir: /Users/geo/Claude Projects/accounting/ventures-creek-accounting
+    command:
+    - bash
+    - start.sh
+    pid_file: /Users/geo/Claude Projects/.services/pids/vc-books.pid
+    internal_pid_file: /Users/geo/Claude Projects/.services/pids/vc-books.internal.pid
+    port: 8742
+    process_match: uvicorn
+  codex-telegram-bridge:
+    name: Codex Telegram Bridge
+    dir: /Users/geo/Claude Projects/codex-telegram-bridge
+    command:
+    - python3
+    - service_control.py
+    - start
+    pid_file: /Users/geo/Claude Projects/.services/pids/codex-telegram-bridge.pid
+    internal_pid_file: /Users/geo/Claude Projects/.services/pids/codex-telegram-bridge.internal.pid
+  conversations-dashboard:
+    name: Conversations Dashboard
+    dir: /Users/geo/Claude Projects/conversations-dashboard
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/conversations-dashboard.pid
+    launchd_service: true
+    launchd_label: com.geo.conversations-dashboard
+    port: 8772
+  fb-leasing-responder:
+    name: FB Leasing Responder
+    dir: /Users/geo/Claude Projects/Ardent/tools/fb-responder
+    command:
+    - python3
+    - control.py
+    - start
+    pid_file: /Users/geo/Claude Projects/.services/pids/fb-leasing-responder.pid
+    internal_pid_file: /Users/geo/Claude Projects/.services/pids/fb-leasing-responder.internal.pid
+  fb-responder-dashboard:
+    name: FB Responder Dashboard
+    dir: /Users/geo/Claude Projects/Ardent/tools/fb-responder
+    command:
+    - python3
+    - dashboard_control.py
+    - start
+    pid_file: /Users/geo/Claude Projects/.services/pids/fb-responder-dashboard.pid
+    internal_pid_file: /Users/geo/Claude Projects/.services/pids/fb-responder-dashboard.internal.pid
+    port: 8781
+  suno-library:
+    name: Suno Library
+    dir: /Users/geo/Claude Projects/suno
+    command:
+    - bash
+    - start.sh
+    pid_file: /Users/geo/Claude Projects/.services/pids/suno-library.pid
+    port: 4177
+    process_match: app/server.mjs
+  replica-launcher:
+    name: Replica Launcher
+    dir: /Users/geo/Claude Projects/Website replicas
+    command:
+    - node
+    - shared/replica-launcher.mjs
+    - '8790'
+    pid_file: /Users/geo/Claude Projects/.services/pids/replica-launcher.pid
+    port: 8790
+  simple-board:
+    name: Simple Board
+    dir: /Users/geo/Documents/Simple Whiteboard
+    command:
+    - bash
+    - start.sh
+    pid_file: /Users/geo/Claude Projects/.services/pids/simple-board.pid
+    port: 8782
+  rv-tracker:
+    name: RV Tracker
+    dir: /Users/geo/Claude Projects/misc_oneoff_projects/rv vettings/tracker
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/rv-tracker.pid
+    launchd_service: true
+    launchd_label: com.geo.rv-tracker
+    port: 8791
+  opencodex:
+    name: OpenCodex Proxy
+    # Local model-routing proxy: lets Claude Code Desktop / Codex be driven by
+    # non-Anthropic brains (Grok, GPT). Installed 2026-07-28. Its own launchd
+    # plist lives at ~/Library/LaunchAgents/com.opencodex.proxy.plist (standard
+    # local location), so no plist_path is needed. Manage with `ocx` CLI;
+    # `ocx stop` also restores native Codex config.
+    dir: /Users/geo/.opencodex
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/opencodex.pid
+    launchd_service: true
+    launchd_label: com.opencodex.proxy
+    port: 10100
+  tools-dashboard:
+    name: Tools Dashboard
+    dir: /Users/geo/Claude Projects/site-wide/tools-dashboard
+    command:
+    - node
+    - server.js
+    pid_file: /Users/geo/Claude Projects/.services/pids/tools-dashboard.pid
+    port: 8792
+    health_url: https://geos-mbp.tail9f0829.ts.net:8444/api/health
+    health_response: '{"status":"ok"}'
+    url: https://geos-mbp.tail9f0829.ts.net:8444
+  operator:
+    name: Operator Agent Workbench
+    dir: /Users/geo/Claude Projects/operator
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/operator.pid
+    launchd_service: true
+    launchd_label: com.geo.operator
+    port: 3000
+  voicebox:
+    name: Voicebox TTS
+    dir: /Users/geo/Claude Projects/voicebox
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/voicebox.pid
+    launchd_service: true
+    launchd_label: com.geo.voicebox
+    port: 17493
+log_file: /Users/geo/Claude Projects/.services/logs/services.log

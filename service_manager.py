@@ -2,6 +2,7 @@
 
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -10,6 +11,7 @@ import time as time_module
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib import error, request as urllib_request
 
 import yaml
 
@@ -25,10 +27,22 @@ class Service:
     command: list[str]
     pid_file: str
     port: Optional[int] = None
+    health_url: Optional[str] = None
+    health_response: Optional[str] = None
+    process_match: Optional[str] = None
     uses_venv: bool = False
     launchd_service: bool = False
     launchd_label: Optional[str] = None
     internal_pid_file: Optional[str] = None
+    # Remote services: "user@host" reachable over Tailscale with key-based SSH.
+    # When set, port/launchctl inspection and start/stop run on that host instead
+    # of locally. health_url still runs from here, since it is plain HTTP.
+    host: Optional[str] = None
+    # Remote launchd plists cannot be discovered by scanning the local filesystem.
+    plist_path: Optional[str] = None
+    # Overrides the dashboard's port link. Needed when the service does not live
+    # on this machine, or is fronted by HTTPS on a different port.
+    url: Optional[str] = None
 
 
 class ServiceManager:
@@ -53,11 +67,48 @@ class ServiceManager:
                 command=svc["command"],
                 pid_file=svc["pid_file"],
                 port=svc.get("port"),
+                health_url=svc.get("health_url"),
+                health_response=svc.get("health_response"),
+                process_match=svc.get("process_match"),
                 uses_venv=svc.get("uses_venv", False),
                 launchd_service=svc.get("launchd_service", False),
                 launchd_label=svc.get("launchd_label"),
                 internal_pid_file=svc.get("internal_pid_file"),
+                host=svc.get("host"),
+                plist_path=svc.get("plist_path"),
+                url=svc.get("url"),
             )
+
+    @staticmethod
+    def _remote(host: Optional[str], argv: list[str]) -> list[str]:
+        """Wrap argv so it runs on `host` when the service is remote.
+
+        BatchMode fails fast instead of hanging on a password prompt, which
+        matters because these calls sit in the dashboard's status path.
+        """
+        if not host:
+            return argv
+        return [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=5",
+            host,
+            " ".join(shlex.quote(a) for a in argv),
+        ]
+
+    def _pid_alive(self, pid: int, host: Optional[str] = None) -> bool:
+        """is_running() only knows about the local process table."""
+        if not host:
+            return PIDManager.is_running(pid)
+        try:
+            result = subprocess.run(
+                self._remote(host, ["kill", "-0", str(pid)]),
+                capture_output=True,
+                timeout=8,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
 
     def status(self, service_name: Optional[str] = None) -> dict[str, dict]:
         """Get status of all services or a specific one."""
@@ -65,9 +116,14 @@ class ServiceManager:
         services = {service_name: self.services[service_name]} if service_name else self.services
 
         for key, svc in services.items():
-            pid = PIDManager.read_pid(svc.pid_file)
-            if pid is None and svc.internal_pid_file:
-                pid = PIDManager.read_pid(svc.internal_pid_file)
+            # A remote service's PID files live on the other host, so the local
+            # ones are meaningless and often stale from a previous local run.
+            if svc.host:
+                pid = None
+            else:
+                pid = PIDManager.read_pid(svc.pid_file)
+                if pid is None and svc.internal_pid_file:
+                    pid = PIDManager.read_pid(svc.internal_pid_file)
             port_open = None
             service_type = "process"
             status_state = "stopped"
@@ -79,10 +135,12 @@ class ServiceManager:
             if svc.launchd_service:
                 service_type = "launchd"
                 label = self._get_launchd_label(svc)
-                launchd_pid = self._get_launchd_running_pid(label)
-                launchd_loaded = self._is_launchd_loaded(label)
+                launchd_pid = self._get_launchd_running_pid(label, svc.host)
+                launchd_loaded = self._is_launchd_loaded(label, svc.host)
                 running = launchd_pid is not None or launchd_loaded
-                if launchd_pid and not pid:
+                # launchctl is authoritative for a launchd job; a pid_file left
+                # behind by an earlier non-launchd run must not win.
+                if launchd_pid:
                     pid = launchd_pid
                 if launchd_pid:
                     status_state = "running"
@@ -96,28 +154,38 @@ class ServiceManager:
                     status_detail = f"launchd job {label} is not loaded"
                 # Also verify via port if service has one
                 if svc.port:
-                    port_open = self._check_port(svc.port)
+                    port_open = self._check_port(svc.port, svc.host)
                     if port_open and not running:
                         running = True
                         status_state = "running"
                         status_label = "Running"
                         status_detail = f"Port {svc.port} is listening"
                     if running and not pid:
-                        pid = self._find_pid_by_port(svc.port)
+                        pid = self._find_pid_by_port(svc.port, svc.host)
             # For services with ports, check port first (more reliable for npm/node)
             elif svc.port:
                 service_type = "port"
-                port_open = self._check_port(svc.port)
-                running = port_open
-                if running:
+                port_open = self._check_port(svc.port, svc.host)
+                if port_open and (not pid or not self._pid_alive(pid, svc.host)):
+                    pid = self._find_pid_by_port(svc.port, svc.host)
+                pid_alive = pid is not None and self._pid_alive(pid, svc.host)
+                health_ok, health_detail = self._check_health(svc)
+                if not port_open:
+                    running = False
+                    status_detail = f"Port {svc.port} is not listening"
+                elif not pid_alive:
+                    running = False
+                    status_detail = f"Port {svc.port} is listening but no live process was identified"
+                elif svc.health_url and not health_ok:
+                    running = False
+                    status_detail = health_detail or f"Health check failed for {svc.health_url}"
+                else:
+                    running = True
                     status_state = "running"
                     status_label = "Running"
-                    status_detail = f"Port {svc.port} is listening"
-                else:
+                    status_detail = health_detail or f"Port {svc.port} is listening"
+                if not running and not status_detail:
                     status_detail = f"Port {svc.port} is not listening"
-                # If port is open but no PID, find the PID
-                if running and not pid:
-                    pid = self._find_pid_by_port(svc.port)
             else:
                 port_open = None
                 # If recorded PID is dead, try internal_pid_file then directory scan
@@ -125,7 +193,7 @@ class ServiceManager:
                     if svc.internal_pid_file:
                         pid = PIDManager.read_pid(svc.internal_pid_file)
                     if not pid or not PIDManager.is_running(pid):
-                        pid = self._find_pid_by_dir(svc.dir)
+                        pid = self._find_pid_by_dir(svc.dir, svc.process_match)
                 running = pid is not None and PIDManager.is_running(pid)
                 if running:
                     status_state = "running"
@@ -146,15 +214,17 @@ class ServiceManager:
                 "status_detail": status_detail,
                 "launchd_label": self._get_launchd_label(svc) if svc.launchd_service else None,
                 "launchd_loaded": launchd_loaded,
+                "host": svc.host,
+                "url": svc.url,
             }
 
         return result
 
-    def _find_pid_by_port(self, port: int) -> Optional[int]:
+    def _find_pid_by_port(self, port: int, host: Optional[str] = None) -> Optional[int]:
         """Find the PID of a process listening on a port."""
         try:
             result = subprocess.run(
-                ["lsof", "-i", f":{port}"],
+                self._remote(host, ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"]),
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -201,11 +271,10 @@ class ServiceManager:
             pass
         return None
 
-    def _find_pid_by_dir(self, service_dir: str) -> Optional[int]:
+    def _find_pid_by_dir(self, service_dir: str, process_match: Optional[str] = None) -> Optional[int]:
         """Find PID of a process running from a specific directory."""
         try:
-            # Search for varys (bot.py), second-brain (daemon.py), and other python daemons
-            patterns = ["bot.py", "daemon.py", "daemon_control.py"]
+            patterns = [process_match] if process_match else ["bot.py", "daemon.py", "daemon_control.py"]
             for pattern in patterns:
                 result = subprocess.run(
                     ["pgrep", "-fl", "-f", pattern],
@@ -229,11 +298,11 @@ class ServiceManager:
             pass
         return None
 
-    def _check_port(self, port: int) -> bool:
+    def _check_port(self, port: int, host: Optional[str] = None) -> bool:
         """Check if a port is listening."""
         try:
             result = subprocess.run(
-                ["lsof", "-i", f":{port}"],
+                self._remote(host, ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"]),
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -242,13 +311,37 @@ class ServiceManager:
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return False
 
+    def _check_health(self, svc: Service) -> tuple[bool, str]:
+        """Check an optional HTTP health endpoint for a service."""
+        if not svc.health_url:
+            return True, ""
+
+        try:
+            req = urllib_request.Request(
+                svc.health_url,
+                headers={"Accept": "application/json"},
+            )
+            with urllib_request.urlopen(req, timeout=5) as response:
+                body = response.read().decode("utf-8", errors="replace").strip()
+                if response.status != 200:
+                    return False, f"Health check returned HTTP {response.status}"
+                if svc.health_response and body != svc.health_response:
+                    return False, f"Health check body mismatch for {svc.health_url}"
+                return True, f"Health check passed at {svc.health_url}"
+        except error.HTTPError as exc:
+            return False, f"Health check returned HTTP {exc.code}"
+        except error.URLError as exc:
+            return False, f"Health check failed for {svc.health_url}: {exc.reason}"
+        except TimeoutError:
+            return False, f"Health check timed out for {svc.health_url}"
+
     def _get_launchd_label(self, svc) -> str:
         """Get the launchd label for a service."""
         if svc.launchd_label:
             return svc.launchd_label
         return f"com.{svc.name}.proxy"
 
-    def _get_launchd_running_pid(self, label: str) -> Optional[int]:
+    def _get_launchd_running_pid(self, label: str, host: Optional[str] = None) -> Optional[int]:
         """Return the live PID for a launchd service, or None if not running.
 
         Strategy:
@@ -260,7 +353,7 @@ class ServiceManager:
         pid: Optional[int] = None
         try:
             result = subprocess.run(
-                ["launchctl", "list", label],
+                self._remote(host, ["launchctl", "list", label]),
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -286,7 +379,7 @@ class ServiceManager:
         if pid is None:
             try:
                 result2 = subprocess.run(
-                    ["launchctl", "list"],
+                    self._remote(host, ["launchctl", "list"]),
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -305,13 +398,13 @@ class ServiceManager:
 
         if pid is None:
             return None
-        return pid if PIDManager.is_running(pid) else None
+        return pid if self._pid_alive(pid, host) else None
 
-    def _is_launchd_loaded(self, label: str) -> bool:
+    def _is_launchd_loaded(self, label: str, host: Optional[str] = None) -> bool:
         """Return True when a launchd job is loaded, even if no process is active."""
         try:
             result = subprocess.run(
-                ["launchctl", "list", label],
+                self._remote(host, ["launchctl", "list", label]),
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -323,17 +416,18 @@ class ServiceManager:
     def _check_launchd_service(self, svc) -> bool:
         """Check if a launchd service is loaded or has a live PID."""
         label = self._get_launchd_label(svc)
-        return self._get_launchd_running_pid(label) is not None or self._is_launchd_loaded(label)
+        return (self._get_launchd_running_pid(label, svc.host) is not None
+                or self._is_launchd_loaded(label, svc.host))
 
     def _stop_launchd_service(self, svc) -> bool:
         """Stop a launchd service via launchctl unload (suppresses KeepAlive restart)."""
         label = self._get_launchd_label(svc)
-        plist_path = f"/Users/geo/Library/LaunchAgents/{label}.plist"
+        plist_path = svc.plist_path or f"/Users/geo/Library/LaunchAgents/{label}.plist"
         try:
             subprocess.run(
-                ["launchctl", "unload", plist_path],
+                self._remote(svc.host, ["launchctl", "unload", plist_path]),
                 capture_output=True,
-                timeout=10,
+                timeout=20 if svc.host else 10,
             )
             # Even if unload "fails" (not loaded), the service is stopped — treat as success
             self.logger.log("STOP", svc.name, "Launchd service unloaded")
@@ -347,18 +441,28 @@ class ServiceManager:
         """Start a launchd service via launchctl load."""
         try:
             label = self._get_launchd_label(svc)
-            plist_path = f"/Users/geo/Library/LaunchAgents/{label}.plist"
-            if not os.path.exists(plist_path):
-                plist_path = os.path.join(svc.dir, f"{label}.plist")
-            if not os.path.exists(plist_path):
-                plist_path = os.path.join(svc.dir, "com.litellm.proxy.plist")
+            if svc.host:
+                # The plist lives on the remote box, so it cannot be discovered by
+                # probing the local filesystem. Require it to be declared.
+                plist_path = svc.plist_path
+                if not plist_path:
+                    print(f"Remote launchd service {svc.display_name} needs plist_path in config.yaml")
+                    return False
+                exists = True
+            else:
+                plist_path = svc.plist_path or f"/Users/geo/Library/LaunchAgents/{label}.plist"
+                if not os.path.exists(plist_path):
+                    plist_path = os.path.join(svc.dir, f"{label}.plist")
+                if not os.path.exists(plist_path):
+                    plist_path = os.path.join(svc.dir, "com.litellm.proxy.plist")
+                exists = os.path.exists(plist_path)
 
-            if os.path.exists(plist_path):
+            if exists:
                 subprocess.run(
-                    ["launchctl", "load", plist_path],
+                    self._remote(svc.host, ["launchctl", "load", plist_path]),
                     check=True,
                     capture_output=True,
-                    timeout=10,
+                    timeout=20 if svc.host else 10,
                 )
                 self.logger.log("START", svc.name, f"Launchd service started via {plist_path}")
                 print(f"Started {svc.display_name} via launchd")
@@ -472,7 +576,7 @@ class ServiceManager:
 
             # No recognized PID → try directory scan
             time_module.sleep(0.5)
-            pid = self._find_pid_by_dir(svc.dir)
+            pid = self._find_pid_by_dir(svc.dir, svc.process_match)
             if pid and PIDManager.is_running(pid):
                 return pid, None
 
@@ -506,7 +610,7 @@ class ServiceManager:
             # Fallback: find PID by directory scan
             if not real_pid and not error:
                 time_module.sleep(0.5)
-                pid = self._find_pid_by_dir(svc.dir)
+                pid = self._find_pid_by_dir(svc.dir, svc.process_match)
                 if pid and PIDManager.is_running(pid):
                     real_pid = pid
 
@@ -565,7 +669,7 @@ class ServiceManager:
         else:
             # No port: PID file may be stale/zombie, try to find by directory scan
             if not pid or not PIDManager.is_running(pid):
-                pid = self._find_pid_by_dir(svc.dir)
+                pid = self._find_pid_by_dir(svc.dir, svc.process_match)
             if not pid or not PIDManager.is_running(pid):
                 print(f"{svc.display_name} is not running")
                 PIDManager.remove_pid(svc.pid_file)
@@ -599,7 +703,7 @@ class ServiceManager:
 
         # Force-clear anything still running from this directory
         if not svc.launchd_service:
-            pid = self._find_pid_by_dir(svc.dir)
+            pid = self._find_pid_by_dir(svc.dir, svc.process_match)
             if pid and PIDManager.is_running(pid):
                 PIDManager.kill_process_tree(pid)
                 time_module.sleep(0.5)
@@ -660,14 +764,15 @@ class ServiceManager:
                 _kill(pid)
 
         # 5. Directory scan (pattern-based)
-        pid = self._find_pid_by_dir(svc.dir)
+        pid = self._find_pid_by_dir(svc.dir, svc.process_match)
         if pid:
             _kill(pid)
 
         # 6. Broad pgrep sweep — catches orphaned children and strays
         try:
+            sweep_pattern = svc.process_match or svc.dir
             result = subprocess.run(
-                ["pgrep", "-f", svc.dir],
+                ["pgrep", "-f", sweep_pattern],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -695,21 +800,29 @@ class ServiceManager:
             time_module.sleep(1)
         return False
 
-    def reboot_all(self) -> dict[str, bool]:
+    def reboot_all(self, exclude: Optional[set] = None) -> dict[str, bool]:
         """Kill all services then start them in series, verifying each launch.
 
         Phase 1: Force-kill every service via all available methods.
         Phase 2: Start each service in config order; verify it's actually running
                  before proceeding to the next one.
 
+        Args:
+            exclude: service names to leave untouched (e.g. shelved services) -
+                     they are neither killed nor started.
+
         Returns: dict[service_name -> confirmed_running]
         """
+        exclude = exclude or set()
         results: dict[str, bool] = {}
 
         # --- Phase 1: Kill everything ---
         self.logger.log("REBOOT", "all", "Phase 1: killing all services")
         print("=== REBOOT Phase 1: Killing all services ===")
         for name, svc in self.services.items():
+            if name in exclude:
+                print(f"  Skipping {svc.display_name} (shelved)...")
+                continue
             print(f"  Killing {svc.display_name}...")
             self._force_kill_service(svc)
 
@@ -720,6 +833,8 @@ class ServiceManager:
         self.logger.log("REBOOT", "all", "Phase 2: starting services in series")
         print("=== REBOOT Phase 2: Starting services ===")
         for name, svc in self.services.items():
+            if name in exclude:
+                continue
             print(f"  Starting {svc.display_name}...")
             started = self.start(name, "Reboot")
 
