@@ -94,7 +94,7 @@ services:
     # Gateway Patch Bay: wiring, model scout, verdicts for the LiteLLM proxy above.
     # launchd binds it to 0.0.0.0 so the card link works over Tailscale.
     # Plist source: LiteLLM server/launchd/com.geo.litellm-dashboard.plist
-    name: LiteLLM Gateway Dashboard
+    name: Patch Bay
     dir: /Users/geo/Claude Projects/LiteLLM server
     command: []
     pid_file: /Users/geo/Claude Projects/.services/pids/litellm-dashboard.pid
@@ -233,6 +233,22 @@ services:
     launchd_service: true
     launchd_label: com.geo.rv-tracker
     port: 8791
+  bike-tracker:
+    name: Bike Tracker
+    dir: /Users/geo/Claude Projects/misc_oneoff_projects/bike-vetting/tracker
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/bike-tracker.pid
+    launchd_service: true
+    launchd_label: com.geo.bike-tracker
+    port: 8793
+  land-tracker:
+    name: Land Tracker
+    dir: /Users/geo/Claude Projects/Land_Flipping/tracker
+    command: []
+    pid_file: /Users/geo/Claude Projects/.services/pids/land-tracker.pid
+    launchd_service: true
+    launchd_label: com.geo.land-tracker
+    port: 8795
   opencodex:
     name: OpenCodex Proxy
     # Local model-routing proxy: lets Claude Code Desktop / Codex be driven by
